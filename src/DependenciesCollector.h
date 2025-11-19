@@ -49,6 +49,9 @@ public:
     bool TraverseTemplateSpecializationTypeLoc(clang::TemplateSpecializationTypeLoc);
 
     bool TraverseCallExpr(clang::CallExpr*);
+#if CAIDE_CLANG_VERSION_AT_LEAST(10,0)
+    bool TraverseRequiresExpr(clang::RequiresExpr* requiresExpr);
+#endif
 
     bool VisitType(clang::Type*);
     bool VisitTypedefType(clang::TypedefType*);
