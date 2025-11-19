@@ -314,6 +314,27 @@ bool OptimizerVisitor::processUsingDirective(Decl* canonicalDecl, DeclContext* d
     return usingIsRedundant;
 }
 
+// 'using ns::identifier;' (e.g., 'using std::vector;')
+bool OptimizerVisitor::VisitUsingDecl(UsingDecl* usingDecl) {
+    if (!sourceManager.isInMainFile(getBeginLoc(usingDecl)))
+        return true;
+    dbg(CAIDE_FUNC);
+
+    // Check if any of the UsingShadowDecls introduced by this UsingDecl are used
+    bool anyShadowUsed = false;
+    for (UsingShadowDecl* shadowDecl : usingDecl->shadows()) {
+        if (usedDeclarations.count(shadowDecl->getCanonicalDecl()) > 0) {
+            anyShadowUsed = true;
+            break;
+        }
+    }
+
+    if (!anyShadowUsed)
+        removeDecl(usingDecl);
+
+    return true;
+}
+
 // 'using namespace Ns;'
 bool OptimizerVisitor::VisitUsingDirectiveDecl(UsingDirectiveDecl* usingDecl) {
     if (!sourceManager.isInMainFile(getBeginLoc(usingDecl)))

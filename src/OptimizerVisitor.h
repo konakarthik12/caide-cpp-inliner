@@ -49,6 +49,7 @@ public:
     bool VisitTypedefDecl(clang::TypedefDecl* typedefDecl);
     bool VisitTypeAliasDecl(clang::TypeAliasDecl* aliasDecl);
     bool VisitTypeAliasTemplateDecl(clang::TypeAliasTemplateDecl* aliasDecl);
+    bool VisitUsingDecl(clang::UsingDecl* usingDecl);
     bool VisitUsingDirectiveDecl(clang::UsingDirectiveDecl* usingDecl);
     bool VisitVarDecl(clang::VarDecl* varDecl);
     bool VisitVarTemplateDecl(clang::VarTemplateDecl*);

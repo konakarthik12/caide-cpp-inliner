@@ -193,18 +193,22 @@ bool DependenciesCollector::VisitType(Type* T) {
         << " " << QualType(T, 0).getAsString() << std::endl);
     // T->dump();
 #endif
-    insertReference(getCurrentDecl(), T->getAsTagDecl());
+    TagDecl* tagDecl = T->getAsTagDecl();
+    insertReference(getCurrentDecl(), tagDecl);
     return true;
 }
 
 bool DependenciesCollector::VisitTypedefType(TypedefType* typedefType) {
-    insertReference(getCurrentDecl(), typedefType->getDecl());
+    TypedefNameDecl* typedefDecl = typedefType->getDecl();
+    insertReference(getCurrentDecl(), typedefDecl);
     return true;
 }
 
 bool DependenciesCollector::VisitTemplateSpecializationType(TemplateSpecializationType* tempSpecType) {
     TemplateName templateName = tempSpecType->getTemplateName();
-    insertReference(getCurrentDecl(), templateName.getAsTemplateDecl());
+    TemplateDecl* templateDecl = templateName.getAsTemplateDecl();
+    insertReference(getCurrentDecl(), templateDecl);
+
     return true;
 }
 
@@ -499,7 +503,21 @@ bool DependenciesCollector::VisitUsingShadowDecl(UsingShadowDecl* usingShadowDec
     insertReference(usingShadowDecl, usingShadowDecl->getUsingDecl());
 #endif
 
-    insertReference(usingShadowDecl, usingShadowDecl->getTargetDecl());
+    Decl* targetDecl = usingShadowDecl->getTargetDecl();
+    insertReference(usingShadowDecl, targetDecl);
+    
+    // Add reverse edge: when targetDecl is used, the UsingShadowDecl is also marked as used
+    if (targetDecl) {
+        Decl* canonicalTarget = targetDecl->getCanonicalDecl();
+        Decl* canonicalShadow = usingShadowDecl->getCanonicalDecl();
+        srcInfo.uses[canonicalTarget].insert(canonicalShadow);
+        dbg("Reverse edge FROM " << canonicalTarget->getDeclKindName() << " " << canonicalTarget
+            << "<" << toString(sourceManager, canonicalTarget).substr(0, 20) << ">"
+            << " TO UsingShadow " << canonicalShadow
+            << "<" << toString(sourceManager, canonicalShadow).substr(0, 20) << ">"
+            << std::endl);
+    }
+    
     return true;
 }
 
