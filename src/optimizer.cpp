@@ -13,6 +13,8 @@
 #include "SourceInfo.h"
 #include "util.h"
 #include "Timer.h"
+#include <iostream>
+
 
 // #define CAIDE_DEBUG_MODE
 #include "caide_debug.h"
@@ -173,6 +175,104 @@ public:
                     queue.insert(srcInfo.uses[decl].begin(), srcInfo.uses[decl].end());
             }
         }
+
+
+
+      /**
+      *       std::unordered_map<Decl*, Decl*> parent;  // Track parent path
+            for (Decl* decl : srcInfo.declsToKeep) {
+                Decl* canonical = decl->getCanonicalDecl();
+                queue.insert(canonical);
+                parent[canonical] = nullptr;  // Root nodes have no parent
+            }
+
+            while (!queue.empty()) {
+                Decl* decl = *queue.begin();
+                queue.erase(queue.begin());
+                if (used.insert(decl).second) {
+#ifdef CAIDE_DEBUG_MODE
+                    // Debug: check if we're marking bad_alloc or its UsingShadowDecl
+                    if (auto* rd = dyn_cast<CXXRecordDecl>(decl)) {
+                        if (rd->getNameAsString() == "bad_alloc") {
+                            dbg("BFS: Marking bad_alloc as used: " << rd << std::endl);
+                            // Print parent path
+                            std::vector<Decl*> path;
+                            Decl* current = decl;
+                            while (current != nullptr) {
+                                path.push_back(current);
+                                auto it = parent.find(current);
+                                if (it != parent.end() && it->second != nullptr) {
+                                    current = it->second;
+                                } else {
+                                    break;
+                                }
+                            }
+                            dbg("  Path from root:" << std::endl);
+                            for (int i = path.size() - 1; i >= 0; --i) {
+                                Decl* d = path[i];
+                                std::string name;
+                                if (auto* nd = dyn_cast<NamedDecl>(d)) {
+                                    name = nd->getNameAsString();
+                                    if (!name.empty()) name = " " + name;
+                                }
+                                dbg("    [" << (path.size() - 1 - i) << "] " << d->getDeclKindName() << name
+                                    << " " << d << " " << toString(sourceManager, d->getSourceRange()) << std::endl);
+                            }
+                        }
+                    }
+                    if (auto* usd = dyn_cast<UsingShadowDecl>(decl)) {
+                        Decl* target = usd->getTargetDecl();
+                        if (target && isa<CXXRecordDecl>(target)) {
+                            auto* rd = cast<CXXRecordDecl>(target);
+                            if (rd->getNameAsString() == "bad_alloc") {
+                                dbg("BFS: Marking UsingShadowDecl for bad_alloc as used: " << usd << std::endl);
+                                // Print parent path
+                                std::vector<Decl*> path;
+                                Decl* current = decl;
+                                while (current != nullptr) {
+                                    path.push_back(current);
+                                    auto it = parent.find(current);
+                                    if (it != parent.end() && it->second != nullptr) {
+                                        current = it->second;
+                                    } else {
+                                        break;
+                                    }
+                                }
+                                dbg("  Path from root:" << std::endl);
+                                for (int i = path.size() - 1; i >= 0; --i) {
+                                    Decl* d = path[i];
+                                    dbg("    [" << (path.size() - 1 - i) << "] " << d->getDeclKindName()
+                                        << " " << d << std::endl);
+                                }
+                            }
+                        }
+                    }
+#endif
+                    // Mark parent as well (if declaration has a parent)
+                    DeclContext* declContext = decl->getLexicalDeclContext();
+                    if (Decl* parentDecl = dyn_cast<Decl>(declContext)) {
+                        Decl* canonicalParent = parentDecl->getCanonicalDecl();
+                        if (used.insert(canonicalParent).second) {
+                            // Parent will be processed in next iteration
+                            queue.insert(canonicalParent);
+                            parent[canonicalParent] = decl;
+                        }
+                    }
+
+                    // Add children to queue
+                    for (Decl* child : srcInfo.uses[decl]) {
+                        if (child) {
+                            Decl* canonicalChild = child->getCanonicalDecl();
+                            if (parent.find(canonicalChild) == parent.end()) {
+                                parent[canonicalChild] = decl;
+                            }
+                            queue.insert(canonicalChild);
+                        }
+                    }
+                }
+            }
+        }
+*/
 
         // 3. Remove unnecessary lexical declarations.
         std::unordered_set<Decl*> removedDecls;
@@ -351,6 +451,7 @@ string Optimizer::doOptimize(const string& cppFile) {
                 message.push_back('\n');
             }
         }
+        std::cout << message;
         throw std::runtime_error(message.c_str());
     }
 

@@ -400,7 +400,7 @@ bool DependenciesCollector::VisitConceptSpecializationExpr(ConceptSpecialization
 bool DependenciesCollector::TraverseRequiresExpr(RequiresExpr* requiresExpr) {
     // Explicitly traverse the requires expression to ensure all concept specializations
     // inside are visited, especially those in the requirements list.
-    
+
     // RecursiveASTVisitor doesn't have TraverseRequiresExpr by default, so we need to
     // handle all traversal ourselves. Traverse all requirements to capture concept usage.
     for (concepts::Requirement* req : requiresExpr->getRequirements()) {
@@ -410,7 +410,7 @@ bool DependenciesCollector::TraverseRequiresExpr(RequiresExpr* requiresExpr) {
         } else if (auto* exprReq = dyn_cast<concepts::ExprRequirement>(req)) {
             if (!exprReq->isExprSubstitutionFailure() && exprReq->getExpr())
                 TraverseStmt(exprReq->getExpr());
-            if (exprReq->getSatisfactionStatus() >= 
+            if (exprReq->getSatisfactionStatus() >=
                 concepts::ExprRequirement::SS_TypeRequirementSubstitutionFailure) {
                 if (auto* constraintExpr = exprReq->getReturnTypeRequirementSubstitutedConstraintExpr()) {
                     TraverseStmt(constraintExpr);
@@ -422,15 +422,15 @@ bool DependenciesCollector::TraverseRequiresExpr(RequiresExpr* requiresExpr) {
                 TraverseStmt(nestedReq->getConstraintExpr());
         }
     }
-    
+
     // Traverse the body declarations if it exists (it's a RequiresExprBodyDecl, not a Stmt)
     if (auto* body = requiresExpr->getBody()) {
         TraverseDecl(body);
     }
-    
+
     // Also traverse local parameters if any (they're in the body)
     // The parameters are already covered by traversing the body
-    
+
     return true;
 }
 #endif
@@ -442,13 +442,13 @@ bool DependenciesCollector::VisitCXXConstructorDecl(CXXConstructorDecl* ctorDecl
     auto* inheritedCtor = const_cast<CXXConstructorDecl*>(ctorDecl->getInheritedConstructor());
 #endif
     insertReference(ctorDecl, inheritedCtor);
-    
+
     // If this constructor is part of a member function template, link it to the FunctionTemplateDecl
     // This ensures member template constructors are tracked when the class is used
     if (FunctionTemplateDecl* ftemplate = ctorDecl->getDescribedFunctionTemplate()) {
         insertReference(ctorDecl, ftemplate);
     }
-    
+
     for (auto it = ctorDecl->init_begin(); it != ctorDecl->init_end(); ++it) {
         CXXCtorInitializer* ctorInit = *it;
         if (ctorInit->isWritten())
@@ -505,7 +505,7 @@ bool DependenciesCollector::VisitUsingShadowDecl(UsingShadowDecl* usingShadowDec
 
     Decl* targetDecl = usingShadowDecl->getTargetDecl();
     insertReference(usingShadowDecl, targetDecl);
-    
+
     // Add reverse edge: when targetDecl is used, the UsingShadowDecl is also marked as used
     if (targetDecl) {
         Decl* canonicalTarget = targetDecl->getCanonicalDecl();
@@ -517,7 +517,7 @@ bool DependenciesCollector::VisitUsingShadowDecl(UsingShadowDecl* usingShadowDec
             << "<" << toString(sourceManager, canonicalShadow).substr(0, 20) << ">"
             << std::endl);
     }
-    
+
     return true;
 }
 
@@ -542,10 +542,15 @@ bool DependenciesCollector::VisitTypeAliasTemplateDecl(TypeAliasTemplateDecl* al
     insertReference(aliasTemplateDecl, aliasTemplateDecl->getTemplatedDecl());
     return true;
 }
+using Foo = int;
 
 bool DependenciesCollector::VisitClassTemplateDecl(ClassTemplateDecl* templateDecl) {
     insertReference(templateDecl, templateDecl->getTemplatedDecl());
-    
+
+
+
+
+
     // Traverse requires clauses to track concept usage
     if (auto* constraints = templateDecl->getTemplateParameters()->getRequiresClause()) {
 #if CAIDE_CLANG_VERSION_AT_LEAST(10,0)
@@ -558,22 +563,22 @@ bool DependenciesCollector::VisitClassTemplateDecl(ClassTemplateDecl* templateDe
         TraverseStmt(constraints);
 #endif
     }
-    
+
     // Also traverse associated constraints (includes requires clauses and concept constraints)
-    llvm::SmallVector<const Expr*, 4> constraints;
+    llvm::SmallVector<AssociatedConstraint, 4> constraints;
     templateDecl->getAssociatedConstraints(constraints);
-    for (const Expr* expr : constraints) {
+    for (AssociatedConstraint expr : constraints) {
 #if CAIDE_CLANG_VERSION_AT_LEAST(10,0)
-        if (auto* requiresExpr = dyn_cast<RequiresExpr>(const_cast<Expr*>(expr))) {
+        if (auto* requiresExpr = dyn_cast<RequiresExpr>(const_cast<Expr*>(expr.ConstraintExpr))) {
             TraverseRequiresExpr(requiresExpr);
         } else {
-            TraverseStmt(const_cast<Expr*>(expr));
+            TraverseStmt(const_cast<Expr*>(expr.ConstraintExpr));
         }
 #else
         TraverseStmt(const_cast<Expr*>(expr));
 #endif
     }
-    
+
     return true;
 }
 
@@ -646,12 +651,12 @@ bool DependenciesCollector::VisitFunctionDecl(FunctionDecl* f) {
         srcInfo.delayedParsedFunctions.push_back(f);
 
     // Traverse requires clauses to track concept usage (for non-template functions with requires)
-    if (auto* constraints = f->getTrailingRequiresClause()) {
+    if (auto* constraints = f->getTrailingRequiresClause().ConstraintExpr) {
 #if CAIDE_CLANG_VERSION_AT_LEAST(10,0)
-        if (auto* requiresExpr = dyn_cast<RequiresExpr>(constraints)) {
-            TraverseRequiresExpr(requiresExpr);
+        if (dyn_cast<RequiresExpr>(constraints)) {
+            TraverseStmt(const_cast<Expr*>(constraints));
         } else {
-            TraverseStmt(constraints);
+            TraverseStmt(const_cast<Expr*>(constraints));
         }
 #else
         TraverseStmt(constraints);
@@ -690,12 +695,12 @@ bool DependenciesCollector::VisitFunctionDecl(FunctionDecl* f) {
 bool DependenciesCollector::VisitFunctionTemplateDecl(FunctionTemplateDecl* functionTemplate) {
     insertReference(functionTemplate,
             functionTemplate->getInstantiatedFromMemberTemplate());
-    
+
     // Dependency on the pattern function (templated decl)
     if (FunctionDecl* fdecl = functionTemplate->getTemplatedDecl()) {
         insertReference(functionTemplate, fdecl);
     }
-    
+
     // Traverse requires clauses to track concept usage
     if (auto* constraints = functionTemplate->getTemplateParameters()->getRequiresClause()) {
 #if CAIDE_CLANG_VERSION_AT_LEAST(10,0)
@@ -709,34 +714,34 @@ bool DependenciesCollector::VisitFunctionTemplateDecl(FunctionTemplateDecl* func
 #endif
     }
     if (auto* fdecl = functionTemplate->getTemplatedDecl()) {
-        if (auto* constraints = fdecl->getTrailingRequiresClause()) {
+        if (auto& constraints = fdecl->getTrailingRequiresClause()) {
 #if CAIDE_CLANG_VERSION_AT_LEAST(10,0)
-            if (auto* requiresExpr = dyn_cast<RequiresExpr>(constraints)) {
-                TraverseRequiresExpr(requiresExpr);
+            if (auto* requiresExpr = dyn_cast<RequiresExpr>(constraints.ConstraintExpr)) {
+                TraverseRequiresExpr(const_cast<RequiresExpr *>(requiresExpr));
             } else {
-                TraverseStmt(constraints);
+                TraverseStmt(const_cast<Expr *>(constraints.ConstraintExpr));
             }
 #else
             TraverseStmt(constraints);
 #endif
         }
     }
-    
+
     // Also traverse associated constraints (includes requires clauses and concept constraints)
-    llvm::SmallVector<const Expr*, 4> constraints;
+    llvm::SmallVector<AssociatedConstraint, 4> constraints;
     functionTemplate->getAssociatedConstraints(constraints);
-    for (const Expr* expr : constraints) {
+    for (const AssociatedConstraint& expr : constraints) {
 #if CAIDE_CLANG_VERSION_AT_LEAST(10,0)
-        if (auto* requiresExpr = dyn_cast<RequiresExpr>(const_cast<Expr*>(expr))) {
+        if (auto* requiresExpr = dyn_cast<RequiresExpr>(const_cast<Expr*>(expr.ConstraintExpr))) {
             TraverseRequiresExpr(requiresExpr);
         } else {
-            TraverseStmt(const_cast<Expr*>(expr));
+            TraverseStmt(const_cast<Expr*>(expr.ConstraintExpr));
         }
 #else
         TraverseStmt(const_cast<Expr*>(expr));
 #endif
     }
-    
+
     return true;
 }
 
@@ -756,7 +761,7 @@ bool DependenciesCollector::VisitCXXRecordDecl(CXXRecordDecl* recordDecl) {
     // No implicit calls to destructors in AST; assume that
     // if a class is used, its destructor is used too.
     insertReference(recordDecl, recordDecl->getDestructor());
-    
+
     // Link to member function template constructors so they're tracked when the class is used
     // (We only link constructors, not all member templates, to avoid keeping unused member templates)
     for (auto* decl : recordDecl->decls()) {
@@ -766,7 +771,7 @@ bool DependenciesCollector::VisitCXXRecordDecl(CXXRecordDecl* recordDecl) {
             }
         }
     }
-    
+
     return true;
 }
 

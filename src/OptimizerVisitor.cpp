@@ -323,14 +323,26 @@ bool OptimizerVisitor::VisitUsingDecl(UsingDecl* usingDecl) {
     // Check if any of the UsingShadowDecls introduced by this UsingDecl are used
     bool anyShadowUsed = false;
     for (UsingShadowDecl* shadowDecl : usingDecl->shadows()) {
-        if (usedDeclarations.count(shadowDecl->getCanonicalDecl()) > 0) {
+        Decl* canonicalShadow = shadowDecl->getCanonicalDecl();
+        bool isUsed = usedDeclarations.count(canonicalShadow) > 0;
+        dbg("  Checking shadow " << canonicalShadow << " isUsed=" << isUsed << std::endl);
+        if (isUsed) {
             anyShadowUsed = true;
+            Decl* targetDecl = shadowDecl->getTargetDecl();
+            if (targetDecl) {
+                dbg("    Shadow is used, targetDecl=" << targetDecl->getCanonicalDecl()
+                    << " " << targetDecl->getDeclKindName() << std::endl);
+            }
             break;
         }
     }
 
-    if (!anyShadowUsed)
+    if (!anyShadowUsed) {
+        dbg("  Removing UsingDecl at " << toString(sourceManager, usingDecl->getSourceRange()) << std::endl);
         removeDecl(usingDecl);
+    } else {
+        dbg("  Keeping UsingDecl at " << toString(sourceManager, usingDecl->getSourceRange()) << std::endl);
+    }
 
     return true;
 }

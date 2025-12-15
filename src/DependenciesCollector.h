@@ -84,6 +84,7 @@ public:
     bool TraverseClassTemplateSpecializationDecl(clang::ClassTemplateSpecializationDecl*);
     bool VisitFunctionDecl(clang::FunctionDecl* f);
     bool VisitFunctionTemplateDecl(clang::FunctionTemplateDecl* functionTemplate);
+    bool VisitCXXDeductionGuideDecl(clang::CXXDeductionGuideDecl* deductionGuide);
     bool VisitCXXMethodDecl(clang::CXXMethodDecl* method);
     bool VisitCXXRecordDecl(clang::CXXRecordDecl* recordDecl);
     bool VisitUsingShadowDecl(clang::UsingShadowDecl* usingDecl);
