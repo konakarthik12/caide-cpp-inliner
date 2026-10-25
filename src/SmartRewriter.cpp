@@ -9,6 +9,7 @@
 
 #include <clang/Basic/SourceManager.h>
 
+#include <cassert>
 #include <stdexcept>
 
 using namespace clang;
@@ -29,6 +30,12 @@ void SmartRewriter::appendToPreamble(std::string s) {
 }
 
 void SmartRewriter::removeRange(SourceLocation begin, SourceLocation end) {
+    if (begin.isInvalid() || end.isInvalid())
+        return;
+
+    assert(!rewriter.getSourceMgr().isBeforeInTranslationUnit(end, begin)
+        && "removeRange requires begin to be before end");
+
     removed.add(begin, end);
 }
 
@@ -65,4 +72,3 @@ void SmartRewriter::applyChanges() {
 
 }
 }
-

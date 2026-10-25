@@ -21,6 +21,7 @@
 #include <clang/AST/ExprConcepts.h>
 #include <clang/Basic/SourceManager.h>
 
+#include <iostream>
 #include <ostream>
 #include <sstream>
 #include <string>
@@ -38,9 +39,41 @@ bool DependenciesCollector::TraverseDecl(Decl* decl) {
     return ret;
 }
 
+bool DependenciesCollector::TraverseTemplateArgumentLoc(const TemplateArgumentLoc& argLoc) {
+    if (argLoc.getArgument().isNull()) {
+        Decl* currentDecl = getCurrentDecl();
+        std::cerr << "CAIDE DEBUG: skipping null TemplateArgumentLoc during AST traversal";
+        if (currentDecl) {
+            std::cerr << " currentDecl=" << currentDecl->getDeclKindName()
+                      << " loc=" << toString(sourceManager, currentDecl->getBeginLoc())
+                      << " text=<" << toString(sourceManager, currentDecl).substr(0, 120) << ">";
+        }
+        std::cerr << std::endl;
+        return true;
+    }
+
+    return RecursiveASTVisitor<DependenciesCollector>::TraverseTemplateArgumentLoc(argLoc);
+}
+
 void DependenciesCollector::traverseSugaredSignature(const SugaredSignature& sig, bool traverseTypeLocs) {
-    for (const TemplateArgumentLoc& argLoc : sig.templateArgLocs)
+    unsigned argIndex = 0;
+    for (const TemplateArgumentLoc& argLoc : sig.templateArgLocs) {
+        if (argLoc.getArgument().isNull()) {
+            Decl* currentDecl = getCurrentDecl();
+            std::cerr << "CAIDE DEBUG: skipping null TemplateArgumentLoc"
+                      << " argIndex=" << argIndex;
+            if (currentDecl) {
+                std::cerr << " currentDecl=" << currentDecl->getDeclKindName()
+                          << " loc=" << toString(sourceManager, currentDecl->getBeginLoc())
+                          << " text=<" << toString(sourceManager, currentDecl).substr(0, 120) << ">";
+            }
+            std::cerr << std::endl;
+            ++argIndex;
+            continue;
+        }
         TraverseTemplateArgumentLoc(argLoc);
+        ++argIndex;
+    }
 
     for (TypeSourceInfo* t : sig.argTypes) {
         if (traverseTypeLocs) {
@@ -57,6 +90,10 @@ void DependenciesCollector::traverseSugaredSignature(const SugaredSignature& sig
 void DependenciesCollector::traverseTemplateSpecializationTypeImpl(
         const TemplateSpecializationType* tempSpecType, bool traverseTypeLocs)
 {
+    Decl* currentDecl = getCurrentDecl();
+    if (!currentDecl || !sourceManager.isInMainFile(getBeginLoc(currentDecl)))
+        return;
+
     // Template specialized by this type.
     TemplateDecl* tempDecl = nullptr;
 
@@ -88,29 +125,31 @@ void DependenciesCollector::traverseTemplateSpecializationTypeImpl(
     }
 }
 
-bool DependenciesCollector::TraverseTemplateSpecializationTypeLoc(TemplateSpecializationTypeLoc tempSpecTypeLoc) {
+bool DependenciesCollector::TraverseTemplateSpecializationTypeLoc(TemplateSpecializationTypeLoc tempSpecTypeLoc,
+                                                                  bool traverseQualifier) {
     dbg(CAIDE_FUNC);
-    RecursiveASTVisitor::TraverseTemplateSpecializationTypeLoc(tempSpecTypeLoc);
+    RecursiveASTVisitor::TraverseTemplateSpecializationTypeLoc(tempSpecTypeLoc, traverseQualifier);
 
     traverseTemplateSpecializationTypeImpl(tempSpecTypeLoc.getTypePtr(), true);
     return true;
 }
 
 // We duplicate this for Type and TypeLoc, as not everything in clang traversal uses TypeLocs yet.
-bool DependenciesCollector::TraverseTemplateSpecializationType(TemplateSpecializationType* tempSpecType) {
+bool DependenciesCollector::TraverseTemplateSpecializationType(TemplateSpecializationType* tempSpecType,
+                                                              bool traverseQualifier) {
     dbg(CAIDE_FUNC);
-    RecursiveASTVisitor::TraverseTemplateSpecializationType(tempSpecType);
+    RecursiveASTVisitor::TraverseTemplateSpecializationType(tempSpecType, traverseQualifier);
 
     traverseTemplateSpecializationTypeImpl(tempSpecType, false);
     return true;
 }
 
 #if CAIDE_CLANG_VERSION_AT_LEAST(10,0)
-bool DependenciesCollector::TraverseAutoType(AutoType* autoType) {
+bool DependenciesCollector::TraverseAutoType(AutoType* autoType, bool traverseQualifier) {
     dbg(CAIDE_FUNC);
-    RecursiveASTVisitor::TraverseAutoType(autoType);
+    RecursiveASTVisitor::TraverseAutoType(autoType, traverseQualifier);
 
-    if (ConceptDecl* conceptDecl = autoType->getTypeConstraintConcept()) {
+    if (auto* conceptDecl = dyn_cast_if_present<ConceptDecl>(autoType->getTypeConstraintConcept())) {
         // XXX: We might need this in stdlib for transitive dependencies, but
         // substituteTemplateArguments takes too long.
         if (sourceManager.isInMainFile(getBeginLoc(conceptDecl))) {
@@ -131,7 +170,7 @@ bool DependenciesCollector::TraverseVarDecl(VarDecl* valueDecl) {
     if (AutoType* autoType = valueDecl->getType().getTypePtr()->getContainedAutoType()) {
         // AutoType within AutoTypeLoc is missing deduced type: https://github.com/llvm/llvm-project/issues/42259
         // So we traverse the AutoType in addition to AutoTypeLoc.
-        TraverseAutoType(autoType);
+        TraverseAutoType(autoType, true);
     }
 
     return true;
@@ -208,6 +247,41 @@ bool DependenciesCollector::VisitTemplateSpecializationType(TemplateSpecializati
     TemplateName templateName = tempSpecType->getTemplateName();
     TemplateDecl* templateDecl = templateName.getAsTemplateDecl();
     insertReference(getCurrentDecl(), templateDecl);
+
+    return true;
+}
+
+// Class template argument deduction: the AST doesn't record which deduction guide was selected,
+// but Sema marks the selected guide (or its specialization) as referenced. Depend on every
+// user-written guide of the deduced template that was selected somewhere.
+bool DependenciesCollector::VisitDeducedTemplateSpecializationType(
+        DeducedTemplateSpecializationType* deducedType)
+{
+    TemplateDecl* templateDecl = deducedType->getTemplateName().getAsTemplateDecl();
+    if (!templateDecl)
+        return true;
+
+    DeclarationName guideName =
+        templateDecl->getASTContext().DeclarationNames.getCXXDeductionGuideName(templateDecl);
+
+    for (NamedDecl* found : templateDecl->getDeclContext()->lookup(guideName)) {
+        if (found->isImplicit())
+            continue;
+
+        if (auto* guideTemplate = dyn_cast<FunctionTemplateDecl>(found)) {
+            // The specialization carries the concrete dependencies of the guide (e.g. on variable
+            // template specializations in its return type); the pattern is what the optimizer checks.
+            for (FunctionDecl* spec : guideTemplate->specializations()) {
+                if (spec->isReferenced()) {
+                    insertReference(getCurrentDecl(), spec);
+                    insertReference(getCurrentDecl(), guideTemplate->getTemplatedDecl());
+                }
+            }
+        } else if (auto* guide = dyn_cast<CXXDeductionGuideDecl>(found)) {
+            if (guide->isReferenced())
+                insertReference(getCurrentDecl(), guide);
+        }
+    }
 
     return true;
 }
@@ -568,15 +642,12 @@ bool DependenciesCollector::VisitClassTemplateDecl(ClassTemplateDecl* templateDe
     llvm::SmallVector<AssociatedConstraint, 4> constraints;
     templateDecl->getAssociatedConstraints(constraints);
     for (AssociatedConstraint expr : constraints) {
-#if CAIDE_CLANG_VERSION_AT_LEAST(10,0)
-        if (auto* requiresExpr = dyn_cast<RequiresExpr>(const_cast<Expr*>(expr.ConstraintExpr))) {
+        Expr* constraint = const_cast<Expr*>(expr.ConstraintExpr);
+        if (auto* requiresExpr = dyn_cast<RequiresExpr>(constraint)) {
             TraverseRequiresExpr(requiresExpr);
         } else {
-            TraverseStmt(const_cast<Expr*>(expr.ConstraintExpr));
+            TraverseStmt(constraint);
         }
-#else
-        TraverseStmt(const_cast<Expr*>(expr));
-#endif
     }
 
     return true;
@@ -651,16 +722,13 @@ bool DependenciesCollector::VisitFunctionDecl(FunctionDecl* f) {
         srcInfo.delayedParsedFunctions.push_back(f);
 
     // Traverse requires clauses to track concept usage (for non-template functions with requires)
-    if (auto* constraints = f->getTrailingRequiresClause().ConstraintExpr) {
-#if CAIDE_CLANG_VERSION_AT_LEAST(10,0)
+    auto* constraints = f->getTrailingRequiresClause().ConstraintExpr;
+    if (constraints) {
         if (dyn_cast<RequiresExpr>(constraints)) {
             TraverseStmt(const_cast<Expr*>(constraints));
         } else {
             TraverseStmt(const_cast<Expr*>(constraints));
         }
-#else
-        TraverseStmt(constraints);
-#endif
     }
 
     if (f->getTemplatedKind() == FunctionDecl::TK_FunctionTemplate) {
@@ -714,16 +782,14 @@ bool DependenciesCollector::VisitFunctionTemplateDecl(FunctionTemplateDecl* func
 #endif
     }
     if (auto* fdecl = functionTemplate->getTemplatedDecl()) {
-        if (auto& constraints = fdecl->getTrailingRequiresClause()) {
-#if CAIDE_CLANG_VERSION_AT_LEAST(10,0)
-            if (auto* requiresExpr = dyn_cast<RequiresExpr>(constraints.ConstraintExpr)) {
+        auto constraints = fdecl->getTrailingRequiresClause();
+        auto* constraint = constraints.ConstraintExpr;
+        if (constraint) {
+            if (auto* requiresExpr = dyn_cast<RequiresExpr>(constraint)) {
                 TraverseRequiresExpr(const_cast<RequiresExpr *>(requiresExpr));
             } else {
-                TraverseStmt(const_cast<Expr *>(constraints.ConstraintExpr));
+                TraverseStmt(const_cast<Expr *>(constraint));
             }
-#else
-            TraverseStmt(constraints);
-#endif
         }
     }
 
@@ -731,17 +797,19 @@ bool DependenciesCollector::VisitFunctionTemplateDecl(FunctionTemplateDecl* func
     llvm::SmallVector<AssociatedConstraint, 4> constraints;
     functionTemplate->getAssociatedConstraints(constraints);
     for (const AssociatedConstraint& expr : constraints) {
-#if CAIDE_CLANG_VERSION_AT_LEAST(10,0)
-        if (auto* requiresExpr = dyn_cast<RequiresExpr>(const_cast<Expr*>(expr.ConstraintExpr))) {
+        Expr* constraint = const_cast<Expr*>(expr.ConstraintExpr);
+        if (auto* requiresExpr = dyn_cast<RequiresExpr>(constraint)) {
             TraverseRequiresExpr(requiresExpr);
         } else {
-            TraverseStmt(const_cast<Expr*>(expr.ConstraintExpr));
+            TraverseStmt(constraint);
         }
-#else
-        TraverseStmt(const_cast<Expr*>(expr));
-#endif
     }
 
+    return true;
+}
+
+bool DependenciesCollector::VisitCXXDeductionGuideDecl(CXXDeductionGuideDecl* deductionGuide) {
+    (void)deductionGuide;
     return true;
 }
 
@@ -830,4 +898,3 @@ void DependenciesCollector::printGraph(std::ostream& out) const {
 
 }
 }
-

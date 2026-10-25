@@ -1,10 +1,4 @@
-cmake_minimum_required(VERSION 2.8.12)
-if(POLICY CMP0048)
-    cmake_policy(SET CMP0048 NEW)
-endif()
-if(POLICY CMP0074)
-    cmake_policy(SET CMP0074 NEW)
-endif()
+cmake_minimum_required(VERSION 3.20)
 
 project(CaideInliner)
 
@@ -21,7 +15,8 @@ if(CAIDE_USE_SYSTEM_CLANG)
 else()
     set(LLVM_EXTERNAL_CLANG_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/llvm-project/clang" CACHE PATH "" FORCE)
     set(LLVM_ENABLE_PROJECTS clang)
-    set(LLVM_TARGETS_TO_BUILD "X86" CACHE STRING "" FORCE)
+    set(LLVM_TARGETS_TO_BUILD "AArch64" CACHE STRING "" FORCE)
+    set(LLVM_DEFAULT_TARGET_TRIPLE "arm64-apple-darwin25.5.0" CACHE STRING "" FORCE)
     option(BUILD_SHARED_LIBS "" OFF)
     option(LLVM_BUILD_TOOLS "" ON)
     option(LLVM_BUILD_EXAMPLES "" OFF)
@@ -52,13 +47,10 @@ else()
     add_subdirectory(llvm-project/llvm EXCLUDE_FROM_ALL)
 
     if(EXISTS "${CMAKE_CURRENT_BINARY_DIR}/lib/cmake/clang/ClangConfig.cmake")
-        if(POLICY CMP0024)
-            cmake_policy(SET CMP0024 OLD)
-        endif()
         include("${CMAKE_CURRENT_BINARY_DIR}/lib/cmake/clang/ClangConfig.cmake")
     else()
         # If the above doesn't work, we hardcode certain variables:
-        set(LLVM_PACKAGE_VERSION "21.1.2")
+        set(LLVM_PACKAGE_VERSION "22.1.8")
         set(LLVM_LIBRARY_DIRS "${CMAKE_CURRENT_BINARY_DIR}/llvm-project/llvm/lib")
         set(LLVM_INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/llvm-project/llvm/include"
           "${CMAKE_CURRENT_BINARY_DIR}/llvm-project/llvm/include")
@@ -70,11 +62,8 @@ else()
     message(STATUS "Using LLVM from submodule ${LLVM_PACKAGE_VERSION}")
 endif()
 
-if(LLVM_PACKAGE_VERSION VERSION_LESS "11")
-    message(WARNING "A version of clang/llvm that is too old is detected. Build failure is possible.")
-endif()
-if(LLVM_PACKAGE_VERSION VERSION_GREATER_EQUAL "22")
-    message(WARNING "A version of clang/llvm that is too recent is detected. Build failure is possible.")
+if(LLVM_PACKAGE_VERSION VERSION_LESS "21")
+    message(FATAL_ERROR "Caide C++ inliner now requires clang/llvm 21 or newer.")
 endif()
 
 option(CAIDE_LINK_LLVM_DYLIB
@@ -107,13 +96,7 @@ endfunction(add_compiler_option_if_supported)
 
 # CXX_STANDARD() is available only in cmake >= 3.
 # Set the compiler flag explicitly.
-if(LLVM_PACKAGE_VERSION VERSION_LESS "10")
-    add_compiler_option_if_supported("-std=c++11")
-elseif(LLVM_PACKAGE_VERSION VERSION_LESS "16")
-    add_compiler_option_if_supported("-std=c++14")
-else()
-    add_compiler_option_if_supported("-std=c++17")
-endif()
+add_compiler_option_if_supported("-std=c++17")
 
 if(MSVC)
     add_compile_options(/W3)
@@ -161,6 +144,7 @@ endif(CAIDE_LINK_LLVM_DYLIB)
 target_link_libraries(caideInliner PRIVATE ${CAIDE_INLINER_CLANG_LIBS} ${CAIDE_INLINER_LLVM_LIBS})
 
 add_subdirectory(cmd)
+add_subdirectory(optimizer-tool)
 
 enable_testing()
 add_subdirectory(test-tool)
@@ -213,4 +197,3 @@ get_dependencies_recursively(caideInliner all_libs)
 message(STATUS "All libs: ${all_libs}")
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/caide-libs.txt" "${all_libs}")
 unset(all_libs)
-

@@ -71,7 +71,7 @@ void substituteExprs(Sema& sema, llvm::ArrayRef<AssociatedConstraint> exprs,
 {
     ScopedTimer t("substituteExprs");
     for (auto& expr : exprs) {
-        clang::ExprResult result = sema.SubstExpr(const_cast<Expr*>(expr), MLTAL);
+        clang::ExprResult result = sema.SubstExpr(const_cast<Expr*>(expr.ConstraintExpr), MLTAL);
         if (result.isInvalid()) {
             dbg("sema.SubstExpr failed" << std::endl);
         } else if (Expr *res = result.get()) {
@@ -86,17 +86,9 @@ void substituteExprs(Sema& sema, llvm::ArrayRef<AssociatedConstraint> exprs,
 
 // TTemplateDecl is either TemplateDecl or ClassTemplatePartialSpecializationDecl
 template <typename TTemplateDecl>
-llvm::SmallVector<const Expr*, 4> getConstraintExprs(const TTemplateDecl* templateDecl) {
-    llvm::SmallVector<const Expr*, 4> constraintExprs;
-
-#if CAIDE_CLANG_VERSION_AT_LEAST(21, 0)
-    llvm::SmallVector<AssociatedConstraint, 4> constraints;
-    templateDecl->getAssociatedConstraints(constraints);
-    for (const auto& ac : constraints)
-        constraintExprs.push_back(ac.ConstraintExpr);
-#else
+llvm::SmallVector<AssociatedConstraint, 4> getConstraintExprs(const TTemplateDecl* templateDecl) {
+    llvm::SmallVector<AssociatedConstraint, 4> constraintExprs;
     templateDecl->getAssociatedConstraints(constraintExprs);
-#endif
     return constraintExprs;
 }
 
@@ -164,8 +156,9 @@ int deduceTemplateArguments(Sema &sema, TemplateDecl *templateDecl,
     // arguments; the latter doesn't seem to be used anyway...
     TemplateArgumentLoc defaultArgLoc =
         sema.SubstDefaultTemplateArgumentIfAvailable(templateDecl, templateLoc,
-                                                     rAngleLoc, param, deduced,
-                                                     deduced, hasDefaultArg);
+                                                     templateLoc, rAngleLoc,
+                                                     param, deduced, deduced,
+                                                     hasDefaultArg);
     if (hasDefaultArg) {
       synthesizedArgLocs.push_back(defaultArgLoc);
       if (deduced[i].isNull()) {
@@ -316,7 +309,7 @@ SugaredSignature substituteTemplateArguments(
   // of the specialization.
   Sema::InstantiatingTemplate substitutionContext(
       sema, deductionInfo.getLocation(), templateDecl, argsToDeduce,
-      deductionInfo);
+      SourceRange());
   if (substitutionContext.isInvalid()) {
     dbg("Failed to create instantiation context for SubstTemplateArguments");
   } else {

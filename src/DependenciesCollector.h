@@ -22,6 +22,7 @@
 namespace clang {
     class Sema;
     class SourceManager;
+    class TemplateArgumentLoc;
     class TemplateArgumentList;
 }
 
@@ -45,8 +46,9 @@ public:
     bool shouldWalkTypesOfTypeLocs() const;
 
     bool TraverseDecl(clang::Decl*);
-    bool TraverseTemplateSpecializationType(clang::TemplateSpecializationType*);
-    bool TraverseTemplateSpecializationTypeLoc(clang::TemplateSpecializationTypeLoc);
+    bool TraverseTemplateArgumentLoc(const clang::TemplateArgumentLoc&);
+    bool TraverseTemplateSpecializationType(clang::TemplateSpecializationType*, bool);
+    bool TraverseTemplateSpecializationTypeLoc(clang::TemplateSpecializationTypeLoc, bool);
 
     bool TraverseCallExpr(clang::CallExpr*);
 #if CAIDE_CLANG_VERSION_AT_LEAST(10,0)
@@ -56,8 +58,9 @@ public:
     bool VisitType(clang::Type*);
     bool VisitTypedefType(clang::TypedefType*);
     bool VisitTemplateSpecializationType(clang::TemplateSpecializationType*);
+    bool VisitDeducedTemplateSpecializationType(clang::DeducedTemplateSpecializationType*);
 #if CAIDE_CLANG_VERSION_AT_LEAST(10,0)
-    bool TraverseAutoType(clang::AutoType*);
+    bool TraverseAutoType(clang::AutoType*, bool);
     bool TraverseVarDecl(clang::VarDecl*);
     bool VisitAutoType(clang::AutoType*);
 #endif
@@ -124,4 +127,3 @@ private:
 
 }
 }
-
